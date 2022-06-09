@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# add following things for correct work
+# export TG_CHAT_ID=-0000000000000
+# export TG_TOKEN=0000000000:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# export VK_API_TOKEN=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+
+mkdir -p logs
+go run main.go >> /logs/logs.txt 3>> /logs/logs.txt
