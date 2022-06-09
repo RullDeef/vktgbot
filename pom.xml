@@ -88,6 +88,30 @@
           <artifactId>maven-project-info-reports-plugin</artifactId>
           <version>3.0.0</version>
         </plugin>
+        <!-- To build jar with dependencies -->
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-assembly-plugin</artifactId>
+          <version>3.0.0</version>
+          <configuration>
+           <descriptorRefs>
+            <descriptorRef>jar-with-dependencies</descriptorRef>
+           </descriptorRefs>
+           <archive>
+            <manifest>
+             <mainClass>ru.vktgbot.App</mainClass>
+            </manifest>
+           </archive>
+          </configuration>
+          <executions>
+           <execution>
+            <phase>package</phase>
+            <goals>
+             <goal>single</goal>
+            </goals>
+           </execution>
+          </executions>
+         </plugin>
         <!-- <plugin>
           <groupId>org.codehaus.mojo</groupId>
           <artifactId>exec-maven-plugin</artifactId>
