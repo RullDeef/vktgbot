@@ -1,13 +1,7 @@
 package ru.vktgbot;
 
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.StringJoiner;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
-import java.util.stream.StreamSupport;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -17,12 +11,14 @@ import api.longpoll.bots.model.objects.additional.PhotoSize;
 import api.longpoll.bots.model.objects.basic.WallPost;
 import api.longpoll.bots.model.objects.media.Attachment;
 import api.longpoll.bots.model.objects.media.AttachmentType;
+import api.longpoll.bots.model.objects.media.Doc;
 import api.longpoll.bots.model.objects.media.Photo;
+import ru.vktgbot.core.WallPostEntity;
 
 public class VkLongPollBot extends LongPollBot {
     private Logger logger;
     private String accessToken;
-    private List<String> exceptionTags;
+    private List<String> exceptionTags = List.of();
     private TgSenderBot tgBot;
 
     VkLongPollBot(Integer groupId, String accessToken, TgSenderBot tgBot) {
@@ -32,51 +28,92 @@ public class VkLongPollBot extends LongPollBot {
         logger = LoggerFactory.getLogger(VkLongPollBot.class);
     }
 
-    public void setExceptionTags(Iterable<String> newTags) {
-        this.exceptionTags = StreamSupport.stream(newTags.spliterator(), false)
-                .collect(Collectors.toList());
+    public void setExceptionTags(List<String> newTags) {
+        this.exceptionTags = newTags;
     }
 
     @Override
     public void onWallPostNew(WallPost wallPost) {
         logger.info("onWallPostNew: {}", wallPost);
+        WallPostEntity entity = buildWallPostEntity(wallPost);
 
-        String text = wallPost.getText();
-        if (hasExceptionTag(text)) {
-            logger.info("post has exception tags. returning...");
-            return;
-        }
-
-        String caption = extractCaption(text);
-        
-        List<String> photoURLs = new LinkedList<>();
-        if (wallPost.getAttachments() != null) {
-            for (Attachment attachment : wallPost.getAttachments()) {
-                if (attachment.getType() == AttachmentType.PHOTO) {
-                    try {
-                        Photo photo = (Photo) attachment.getAttachmentObject();
-                        photoURLs.add(getBestPhotoURL(photo.getPhotoSizes()));
-                    } catch (Exception e) {
-                        logger.error("cannot attach photo", e);
-                    }
-                }
-            }
-        }
-        
-        logger.info("prepared to send post");
-        WallPost.Copyright postSource = wallPost.getCopyright();
-        if (postSource != null) {
-            String copyright = postSource.getName();
-            String link = postSource.getLink();
-            tgBot.sendPost(caption, copyright, link, photoURLs);
+        if (entity.hasOneOfTags(exceptionTags)) {
+            logger.info("post has exception tags. skipping...");
         } else {
-            tgBot.sendPost(caption, photoURLs);
+            logger.info("prepared to send post");
+            tgBot.sendPost(entity);
         }
     }
 
     @Override
     public String getAccessToken() {
         return accessToken;
+    }
+
+    private WallPostEntity buildWallPostEntity(WallPost wallPost) {
+        String text = wallPost.getText();
+        List<String> photoURLs = extractPhotoURLs(wallPost.getAttachments());
+        List<String> gifURLs = extractGifURLs(wallPost.getAttachments());
+
+        WallPost.Copyright postSource = wallPost.getCopyright();
+        if (postSource != null) {
+            String name = postSource.getName();
+            String link = postSource.getLink();
+            WallPostEntity.Copyright copyright = new WallPostEntity.Copyright(name, link);
+            return new WallPostEntity(text, copyright, photoURLs, gifURLs);
+        } else {
+            return new WallPostEntity(text, photoURLs, gifURLs);
+        }
+    }
+
+    private List<String> extractGifURLs(Iterable<Attachment> attachments) {
+        logger.info("extracting gif urls from {}", attachments);
+
+        if (attachments == null) {
+            logger.info("nothing to extract here");
+            return List.of();
+        }
+
+        List<String> urls = new LinkedList<>();
+        for (Attachment attachment : attachments) {
+            if (attachment.getType() == AttachmentType.DOCUMENT) {
+                Doc doc = (Doc) attachment.getAttachmentObject();
+                if ("gif".equals(doc.getExt())) {
+                    logger.info("founded gif: {}", doc.getUrl());
+                    urls.add(doc.getUrl());
+                } else {
+                    logger.warn("founded document, but it is not gif. skipping...");
+                }
+            }
+        }
+
+        logger.info("extracted: {}", urls);
+        return urls;
+    }
+
+    private List<String> extractPhotoURLs(Iterable<Attachment> attachments) {
+        logger.info("extracting photos urls from {}", attachments);
+
+        if (attachments == null) {
+            logger.info("nothing to extract here");
+            return List.of();
+        }
+        
+        List<String> urls = new LinkedList<>();
+        for (Attachment attachment : attachments) {
+            if (attachment.getType() == AttachmentType.PHOTO) {
+                Photo photo = (Photo) attachment.getAttachmentObject();
+                try {
+                    String url = getBestPhotoURL(photo.getPhotoSizes());
+                    urls.add(url);
+                } catch (Exception e) {
+                    logger.error("cannot attach photo from " + photo.toString(), e);
+                }
+            }
+        }
+
+        logger.info("extracted: {}", urls);
+        return urls;
     }
 
     private String getBestPhotoURL(List<PhotoSize> sizes) {
@@ -96,36 +133,5 @@ public class VkLongPollBot extends LongPollBot {
         logger.info("founded best size: {}x{}", best.getWidth(), best.getHeight());
         logger.info("best source: {}", best.getSrc());
         return best.getSrc();
-    }
-
-    private String extractCaption(String text) {
-        List<String> tags = extractTags(text);
-        StringJoiner joiner = new StringJoiner(" ");
-        tags.forEach((String tag) -> joiner.add(tag));
-        return joiner.toString();
-    }
-
-    private List<String> extractTags(String text) {
-        Pattern pattern = Pattern.compile("(#.*?)@");
-        Matcher matcher = pattern.matcher(text);
-
-        List<String> result = new ArrayList<>();
-        while (matcher.find()) {
-            String tag = matcher.group(1);
-            logger.info("founded tag: {}", tag);
-            result.add(tag);
-        }
-
-        return result;
-    }
-
-    private boolean hasExceptionTag(String text) {
-        for (String tag : exceptionTags) {
-            if (text.contains(tag)) {
-                logger.info("post contains exception tag! skipping");
-                return true;
-            }
-        }
-        return false;
     }
 }
